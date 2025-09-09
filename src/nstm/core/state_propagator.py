@@ -3,7 +3,7 @@
 import torch
 import torch.nn as nn
 from typing import Optional
-from .types import State, States, Token, NSTMConfig
+from .types import State, States, Token, Tokens, NSTMConfig
 
 class StatePropagator(nn.Module):
     """
