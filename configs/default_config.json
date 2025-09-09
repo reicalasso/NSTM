@@ -1,0 +1,9 @@
+{
+    "state_dim": 128,
+    "token_dim": 64,
+    "gate_type": "gru",
+    "num_attention_heads": 4,
+    "max_states": 64,
+    "initial_states": 16,
+    "prune_threshold": 0.3
+}
