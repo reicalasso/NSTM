@@ -36,10 +36,10 @@ class HybridAttention(nn.Module):
         self.head_dim = self.state_dim // self.num_heads
         
         # Linear layers for Token-to-State Attention
-        # Q: tokens, K,V: states
-        self.token_to_state_q = nn.Linear(self.token_dim, self.state_dim)
-        self.token_to_state_k = nn.Linear(self.state_dim, self.state_dim)
-        self.token_to_state_v = nn.Linear(self.state_dim, self.state_dim)
+        # Q: states (query which tokens are relevant), K,V: tokens
+        self.token_to_state_q = nn.Linear(self.state_dim, self.state_dim)  # states -> queries
+        self.token_to_state_k = nn.Linear(self.token_dim, self.state_dim)  # tokens -> keys
+        self.token_to_state_v = nn.Linear(self.token_dim, self.state_dim)  # tokens -> values
         
         # Linear layers for State-to-State Attention
         # Q,K,V: states
@@ -89,6 +89,7 @@ class HybridAttention(nn.Module):
         Applies attention mechanism between tokens and states.
         
         This determines which states should be affected by which tokens.
+        Each state queries which tokens are most relevant to it.
         
         Args:
             tokens (Tokens): Input tokens. Shape: (batch_size, seq_len, token_dim)
@@ -98,59 +99,12 @@ class HybridAttention(nn.Module):
             Tuple[States, Tensor]: 
                 - Attention output (states enriched with token information). 
                   Shape: (batch_size, num_states, state_dim)
-                - Attention weights. Shape: (batch_size, num_heads, seq_len, num_states)
+                - Attention weights. Shape: (batch_size, num_heads, num_states, seq_len)
         """
-        batch_size, seq_len, _ = tokens.shape
-        _, num_states, _ = states.shape
+        batch_size, seq_len, token_dim = tokens.shape
+        _, num_states, state_dim = states.shape
         
-        # Linear transformations and splitting into heads
-        q = self._split_heads(self.token_to_state_q(tokens))  # (B, H, L, D/H)
-        k = self._split_heads(self.token_to_state_k(states))  # (B, H, S, D/H)
-        v = self._split_heads(self.token_to_state_v(states))  # (B, H, S, D/H)
-        
-        # Scaled dot-product attention
-        # (B, H, L, D/H) @ (B, H, D/H, S) -> (B, H, L, S)
-        scores = torch.matmul(q, k.transpose(-2, -1)) / (self.head_dim ** 0.5)
-        attn_weights = F.softmax(scores, dim=-1)  # (B, H, L, S)
-        
-        # Weighted sum
-        # (B, H, L, S) @ (B, H, S, D/H) -> (B, H, L, D/H)
-        attn_output = torch.matmul(attn_weights, v)
-        # Combine heads
-        attn_output = self._combine_heads(attn_output)  # (B, L, D)
-        
-        # There's an issue here: output is (B, L, D) but we need to return (B, S, D).
-        # This is based on the idea that tokens affect states.
-        # One solution: We can aggregate the effect of tokens on states.
-        # For example, take the average over tokens and associate it with states.
-        # However, this is a bit confusing. A better approach:
-        # Token-to-state attention determines which tokens each state should attend to.
-        # So, the output is still (B, S, D), but carries filtered token information.
-        # 
-        # Alternative approach: Token-to-state updates states with token information.
-        # This also makes sense. Then, tokens query states and states update themselves
-        # in light of tokens.
-        # 
-        # In this implementation, each state takes the weighted average of related tokens.
-        # But this doesn't match the tensor dimensions above.
-        # 
-        # The cleanest: Token-to-state tells how tokens affect states.
-        # So, tokens are "values", states are "queries". 
-        # In this case, output is (B, S, D).
-        # 
-        # However, in the code above, q's length is L (token length), 
-        # k and v's length is S (number of states).
-        # This is different from normal attention where q and k have the same length.
-        # 
-        # To resolve confusion, let's think of token-to-state as:
-        # Each state finds the most related tokens to itself.
-        # So, states are query (Q), tokens are key (K) and value (V).
-        # In this case:
-        # Q: states, K: tokens, V: tokens
-        # 
-        # Let's implement this approach.
-        
-        # Correction: Token-to-State as states querying tokens.
+        # States query tokens: Each state finds the most relevant tokens
         # Q: states, K: tokens, V: tokens
         q_state = self._split_heads(self.token_to_state_q(states))  # (B, H, S, D/H)
         k_token = self._split_heads(self.token_to_state_k(tokens))  # (B, H, L, D/H)
@@ -237,5 +191,7 @@ class HybridAttention(nn.Module):
         
         # 4. Output projection
         final_output = self.output_projection(combined_output)  # (B, S, D)
+        
+        return final_output, ts_weights, ss_weights
         
         return final_output, ts_weights, ss_weights

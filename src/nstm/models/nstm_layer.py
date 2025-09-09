@@ -35,6 +35,12 @@ class NSMLayer(nn.Module):
         self.token_router = TokenToStateRouter(config)
         self.hybrid_attention = HybridAttention(config)
         
+        # If token_dim != state_dim, we need a projection layer
+        if self.config.token_dim != self.config.state_dim:
+            self.token_projection = nn.Linear(self.config.token_dim, self.config.state_dim)
+        else:
+            self.token_projection = None
+        
     def forward(
         self, 
         tokens: Tokens, 
@@ -109,7 +115,11 @@ class NSMLayer(nn.Module):
         # StatePropagator takes prev_states and input_tokens.
         # routing_weights indicate how input_tokens are routed to prev_states.
         # This aligns better with the original design.
-        updated_states = self.state_propagator(states, tokens, routing_weights)
+        # 
+        # But StatePropagator requires token_dim == state_dim.
+        # If they don't match, we need to project tokens.
+        processed_tokens = self.token_projection(tokens) if self.token_projection is not None else tokens
+        updated_states = self.state_propagator(states, processed_tokens, routing_weights)
         
         return updated_states, ts_weights, ss_weights
 
